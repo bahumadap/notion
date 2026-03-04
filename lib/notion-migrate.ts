@@ -304,9 +304,19 @@ export async function runMigration(token: string): Promise<{ logs: MigrationLog[
     const contentBlocks: NotionBlock[] = []
     const childPageBlocks: { notionId: string; title: string }[] = []
 
+    const linkedDbIds = new Set<string>()
+
     for (const block of blocks) {
       if (block.type === 'child_page' || block.type === 'child_database') {
         childPageBlocks.push({ notionId: block.id, title: block[block.type].title })
+      } else if (block.type === 'linked_to_database') {
+        // Linked database view — fetch the source database
+        const linkedId = block.linked_to_database?.id
+        if (linkedId && !linkedDbIds.has(linkedId)) {
+          linkedDbIds.add(linkedId)
+          childPageBlocks.push({ notionId: linkedId, title: block.linked_to_database?.title || 'Linked Database' })
+        }
+        contentBlocks.push(convertBlock(block))
       } else {
         const converted = convertBlock(block)
         if (block.has_children) {
@@ -360,6 +370,8 @@ export async function runMigration(token: string): Promise<{ logs: MigrationLog[
         if (dbRes.ok) {
           const dbData = await dbRes.json()
           await processDatabase(dbData, supabaseId)
+        } else {
+          log(`  Could not fetch child "${childRef.title}" (${childRef.notionId}) — check integration access`, 'warn')
         }
         continue
       }

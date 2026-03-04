@@ -1,4 +1,6 @@
 import type { NotionBlock } from '@/lib/supabase'
+import type { ChildDatabase } from '@/app/[pageId]/page'
+import InlineDatabaseTable from './InlineDatabaseTable'
 
 const CALLOUT_COLORS: Record<string, string> = {
   blue_background: 'bg-blue-50 border-blue-200',
@@ -10,7 +12,10 @@ const CALLOUT_COLORS: Record<string, string> = {
   default: 'bg-gray-50 border-gray-200',
 }
 
-function Block({ block }: { block: NotionBlock }) {
+function Block({ block, childDatabases = [] }: { block: NotionBlock; childDatabases?: ChildDatabase[] }) {
+  // Build lookup maps for inline database resolution
+  const dbByNotionId = new Map(childDatabases.map(cd => [cd.page.notion_id, cd]))
+  const dbByTitle = new Map(childDatabases.map(cd => [cd.page.title.toLowerCase(), cd]))
   switch (block.type) {
     case 'paragraph':
       if (!block.content) return <p className="min-h-[1.5em]" />
@@ -169,8 +174,27 @@ function Block({ block }: { block: NotionBlock }) {
       return <div className="my-2 text-sm text-gray-400 italic">[Table of contents]</div>
 
     case 'child_page':
+      return null // Shown in PageView's sub-pages section
+
     case 'child_database':
-      return null // Handled as navigation
+    case 'linked_to_database': {
+      // Try to find the matching child database by notion_id or title
+      const matched = dbByNotionId.get(block.id) || dbByTitle.get((block.content || '').toLowerCase())
+      if (matched) {
+        return (
+          <div className="my-4">
+            <InlineDatabaseTable childDb={matched} />
+          </div>
+        )
+      }
+      // Fallback: show as a placeholder
+      return (
+        <div className="my-3 flex items-center gap-2 p-3 rounded-lg border border-dashed border-gray-200 text-sm text-gray-400">
+          <span>⊞</span>
+          <span>{block.content || 'Database'}</span>
+        </div>
+      )
+    }
 
     default:
       if (block.content) {
@@ -209,7 +233,7 @@ function groupBlocks(blocks: NotionBlock[]): GroupedBlocks[] {
   return groups
 }
 
-export default function BlockRenderer({ blocks }: { blocks: NotionBlock[] }) {
+export default function BlockRenderer({ blocks, childDatabases = [] }: { blocks: NotionBlock[]; childDatabases?: ChildDatabase[] }) {
   const groups = groupBlocks(blocks)
 
   return (
@@ -220,12 +244,12 @@ export default function BlockRenderer({ blocks }: { blocks: NotionBlock[] }) {
           return (
             <Tag key={i} className={`my-2 pl-2 ${group.listType === 'numbered' ? 'list-decimal' : 'list-disc'}`}>
               {group.items.map(block => (
-                <Block key={block.id} block={block} />
+                <Block key={block.id} block={block} childDatabases={childDatabases} />
               ))}
             </Tag>
           )
         }
-        return <Block key={i} block={group.items[0]} />
+        return <Block key={i} block={group.items[0]} childDatabases={childDatabases} />
       })}
     </div>
   )
