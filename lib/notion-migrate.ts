@@ -306,28 +306,35 @@ export async function runMigration(token: string): Promise<{ logs: MigrationLog[
 
     const linkedDbIds = new Set<string>()
 
-    for (const block of blocks) {
-      if (block.type === 'child_page' || block.type === 'child_database') {
-        childPageBlocks.push({ notionId: block.id, title: block[block.type].title })
-      } else if (block.type === 'linked_to_database') {
-        // Linked database view — fetch the source database
-        const linkedId = block.linked_to_database?.id
-        if (linkedId && !linkedDbIds.has(linkedId)) {
-          linkedDbIds.add(linkedId)
-          childPageBlocks.push({ notionId: linkedId, title: block.linked_to_database?.title || 'Linked Database' })
+    // Recursive helper: collect child_page/child_database from nested blocks
+    async function collectBlocks(blockList: any[], depth = 0): Promise<NotionBlock[]> {
+      const result: NotionBlock[] = []
+      for (const block of blockList) {
+        if (block.type === 'child_page' || block.type === 'child_database') {
+          childPageBlocks.push({ notionId: block.id, title: block[block.type].title })
+          // Add as a placeholder block so the position is preserved
+          result.push(convertBlock(block))
+        } else if (block.type === 'linked_to_database') {
+          const linkedId = block.linked_to_database?.id
+          if (linkedId && !linkedDbIds.has(linkedId)) {
+            linkedDbIds.add(linkedId)
+            childPageBlocks.push({ notionId: linkedId, title: block.linked_to_database?.title || 'Linked Database' })
+          }
+          result.push(convertBlock(block))
+        } else {
+          const converted = convertBlock(block)
+          if (block.has_children && depth < 3) {
+            const nested = await fetchBlockChildren(block.id)
+            converted.children = await collectBlocks(nested, depth + 1)
+          }
+          result.push(converted)
         }
-        contentBlocks.push(convertBlock(block))
-      } else {
-        const converted = convertBlock(block)
-        if (block.has_children) {
-          const childBlocks = await fetchBlockChildren(block.id)
-          converted.children = childBlocks
-            .filter(b => b.type !== 'child_page' && b.type !== 'child_database')
-            .map(convertBlock)
-        }
-        contentBlocks.push(converted)
       }
+      return result
     }
+
+    const allContentBlocks = await collectBlocks(blocks)
+    contentBlocks.push(...allContentBlocks)
 
     // Insert page into Supabase
     const { data, error } = await db
